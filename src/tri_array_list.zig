@@ -38,7 +38,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// The capacity will equal `num`.
         /// Deinit with `deinit` or `toOwnedSlice`.
         pub fn initCapacity(allo: Allocator, num: usize) @This() {
-            var self: @This() = empty;
+            var self: @This() = .empty;
             try self.ensureTotalCapacityPrecise(allo, num);
             return self;
         }
@@ -46,7 +46,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// Init with externally managed memory
         /// Buffer determines capacity + length set to 0
         /// All fns that accept allocator will cause illegal behavior
-        pub fn initBuffer(
+        pub fn initSliceBuffer(
             index_buffer: Slice,
             id_buffer: Slice,
             item_buffer: Slice,
@@ -95,24 +95,21 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         pub fn fromOwnedSlice(allo: Allocator, slice: Slice) @This() {
             const len = slice.len;
             var indices = try allo.alignedAlloc(T, alignment, len);
-            var ids = try allo.alignedAlloc(T, alignment, len);
             // use vectors to quickly create values
             const VEC_LEN: comptime_int = 64;
             const stair = std.simd.iota(usize, VEC_LEN);
             var i: usize = 0;
-            while (i + 64 < len) : (i += 64) {
+            while (i + 64 < len) : (i += 64)
                 indices[i..][0..64].* = @as(@Vector(VEC_LEN, usize), @splat(i)) + stair;
-            }
-            if (i < len)
-                for (i..len) |j|
-                    indices[i] = j;
-            // copy indices to ids asymmetrically
-            @memcpy(ids, indices);
+            for (i..len) |j| indices[i] = j;
+            // copy indices to ids
+            const ids = try allo.dupe(usize, indices);
+            // return constructor
             return @This(){
                 .indices = indices,
                 .ids = ids,
-                .items = items,
-                .capacity = capacity,
+                .items = slice,
+                .capacity = slice.len,
             };
         }
 
@@ -123,16 +120,16 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         ) @This() {
             const len = slice.len + 1;
             var indices = try allo.alignedAlloc(usize, @alignOf(usize), len);
-            var ids = try allo.alignedAlloc(usize, @alignOf(usize), len);
             // uses vectors to quickly create values
             const VEC_LEN: comptime_int = 64;
             const stair = std.simd.iota(usize, VEC_LEN);
             var i: usize = 0;
-            while (i + 64 < len) : (i += 64) {
+            while (i + 64 < len) : (i += 64)
                 indices[i..][0..64].* = @as(@Vector(VEC_LEN, usize), @splat(i)) + stair;
-            }
-            if (i < len) for (i..len) |j| indices[i] = j;
-            @memcpy(ids, indices);
+            for (i..len) |j| indices[i] = j;
+            // copy indices to ids
+            const ids = try allo.dupe(usize, indices);
+            // return
             return @This(){
                 .indices = indices,
                 .ids = ids,
