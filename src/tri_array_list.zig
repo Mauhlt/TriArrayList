@@ -417,6 +417,38 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             );
         }
 
+        /// Increase array length to match full capacity already allocated.
+        /// New elements have `undefined` values.
+        /// Never invalidates element pointers.
+        pub fn expandToCapacity(self: *@This()) void {
+            self.indices.len = self.capacity;
+            self.ids.len = self.capacity;
+            self.items.len = self.capacity;
+        }
+
+        /// Increase length by 1. Returns ptr to new item.
+        /// Returned element ptr is invalidated when list is resized.
+        pub fn addOne(self: *@This(), allo: Allocator) Allocator.Error!*T {
+            // never overflows b/c `self.items` can never occupy outside range.
+            const new_len = self.items.len + 1;
+            try self.ensureTotalCapacity(allo, new_len);
+            return self.addOneAssumeCapacity();
+        }
+
+        /// Increase len by 1. Return ptr to new item.
+        /// Never invalidate element ptrs.
+        /// Returned element ptr is invalidated when list is resized.
+        /// Asserts that list can hold 1 more item.
+        pub fn addOneAssumeCapacity(self: *@This()) *T {
+            assert(self.items.len < self.capacity);
+            assert(self.ids.len < self.capacity);
+            assert(self.indices.len < self.capacity);
+            self.items.len += 1;
+            self.ids.len = self.items.len;
+            self.indices.len = self.indices.len;
+            return &self.items[self.items.len - 1];
+        }
+
         pub fn growCapacity(min: usize) usize {
             return min +| (min / 2 + init_capacity);
         }
