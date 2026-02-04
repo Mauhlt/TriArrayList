@@ -138,6 +138,37 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             };
         }
 
+        /// Caller owns memory.
+        /// Empties triarraylist.
+        /// Capacity is cleared.
+        /// Deinit is unnecessary but safe.
+        pub fn toOwnedSlice(self: *@This(), allo: Allocator) []T {
+            const old_memory = self.allocatedItemSlice();
+            if (allo.remap(old_memory, self.items.len)) |new_items| {
+                allo.free(self.indices);
+                allo.free(self.ids);
+                self.* = .empty;
+                return new_items;
+            }
+
+            const new_memory = try allo.alignedAlloc(T, alignment, self.items.len);
+            @memcpy(new_memory, self.items);
+            self.clearAndFree(allo);
+            return new_memory;
+        }
+
+        /// Caller owns memory. Empties this TriArrayList.
+        pub fn toOwnedSliceSentinel(
+            self: *@This(),
+            comptime sentinel: T,
+            allo: Allocator,
+        ) Allocator.Error!SentinelSlice(sentinel) {
+            try self.ensureTotalCapacityPrecise(self.items.len + 1);
+            self.appendAssumeCapacity(sentinel);
+            const result = try self.toOwnedSlice(allo);
+            return result[0 .. result.len - 1 :sentinel];
+        }
+
         /// Remove and return last item from items
         /// If items is empty, return `null`
         /// Invalidate pointers to last item
@@ -231,34 +262,6 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// Returns slice of unused items up to capacity
         pub fn unusedItemsSlice(self: @This()) []T {
             return self.allocatedItemSlice()[self.items.len..];
-        }
-
-        /// Caller owns memory. Empties tri-array-list.
-        /// Its capacity is cleared, making `deinit` unnecessary but safe.
-        pub fn toOwnedSlice(self: *@This(), allo: Allocator) []T {
-            const old_memory = self.allocatedItemSlice();
-            if (allo.remap(old_memory, self.items.len)) |new_items| {
-                allo.free(self.indices);
-                allo.free(self.ids);
-                self.* = .empty;
-                return new_items;
-            }
-
-            const new_memory = try allo.alignedAlloc(T, alignment, self.items.len);
-            @memcpy(new_memory, self.items);
-            self.clearAndFree(allo);
-            return new_memory;
-        }
-
-        /// Caller owns memory. Empties this TriArrayList.
-        pub fn toOwnedSliceSentinel(
-            self: *@This(),
-            comptime sentinel: T,
-        ) [:sentinel]T {
-            try self.ensureTotalCapacityPrecise(self.items.len + 1);
-            self.appendAssumeCapacity(sentinel);
-            const result = try self.toOwnedSlice();
-            return result[0 .. result.len - 1 :sentinel];
         }
 
         /// Creates copy of triarraylist
