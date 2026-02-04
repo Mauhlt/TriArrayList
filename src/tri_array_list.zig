@@ -353,6 +353,8 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             const new_len = old_len + items.len;
             assert(new_len <= self.capacity);
             @memcpy(self.items[old_len..][0..items.len], items);
+            for (old_len..new_len) |i| self.indices[i] = i;
+            @memcpy(self.ids[old_len..new_len], self.indices[old_len..new_len]);
         }
 
         pub fn shrinkRetainingCapacity(self: *@This(), new_len: usize) void {
@@ -392,7 +394,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             self.capacity = 0;
         }
 
-        /// Modify array to hold at least `new capacity` items.
+        /// Modify array to hold at least `new capacity` items/ids/indices.
         /// Impl super-linear growth to achieve amortized O(1) append ops.
         /// Invalidate element ptrs if additional memory needed.
         pub fn ensureTotalCapacity(
@@ -403,30 +405,6 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             // avoid unnecessary re-allocs
             if (self.capacity >= new_capacity) return;
             return self.ensureTotalCapacityPrecise(allo, growCapacity(new_capacity));
-        }
-
-        /// Modify array to hold at least `new capacity` items.
-        /// Impl super-linear growth to achieve amortized O(1) append ops.
-        /// Invalidate element ptrs if additional memory needed.
-        pub fn ensureTotalIndexCapacity(
-            self: *@This(),
-            allo: Allocator,
-            new_capacity: usize,
-        ) Allocator.Error!void {
-            if (self.capacity >= new_capacity) return;
-            return self.ensureTotalIndexCapacityPrecise(allo, growCapacity(new_capacity));
-        }
-
-        /// Modify array to hold at least `new capacity` items.
-        /// Impl super-linear growth to achieve amortized O(1) append ops.
-        /// Invalidate element ptrs if additional memory needed.
-        pub fn ensureTotalIdCapacity(
-            self: *@This(),
-            allo: Allocator,
-            new_capacity: usize,
-        ) Allocator.Error!void {
-            if (self.capacity >= new_capacity) return;
-            return self.EnsureTotalIdCapacity(allo, growCapacity(new_capacity));
         }
 
         /// If current capacity is less than `new capacity`, this fn will modify the array
@@ -446,7 +424,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             // Avoid copying allocated but unused bytes by attempting resizing in place.
             // Fall back to allocating a new buffer and doing a copy.
             // With a realloc() call, the allocated impl would pointlessly copy our extra capacity.
-            {
+            { // Indices
                 const old_memory = self.allocatedIndexSlice();
                 if (allo.remap(old_memory, new_capacity)) |new_memory| {
                     self.indices.ptr = new_memory.ptr;
@@ -457,7 +435,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
                     self.indices.ptr = new_memory.ptr;
                 }
             }
-            {
+            { // Ids
                 const old_memory = self.allocatedIdSlice();
                 if (allo.remap(old_memory, new_capacity)) |new_memory| {
                     self.ids.ptr = new_memory.ptr;
@@ -468,7 +446,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
                     self.ids.ptr = new_memory.ptr;
                 }
             }
-            {
+            { // Items
                 const old_memory = self.allocatedItemSlice();
                 if (allo.remap(old_memory, new_capacity)) |new_memory| {
                     self.items.ptr = new_memory.ptr;
