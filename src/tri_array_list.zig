@@ -10,12 +10,21 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return Aligned(T, null);
 
     return struct {
+        /// Indices = array of indices into items
+        /// Ids = array of positions from items into indices,
+        /// Items = array of items,
+        /// Capacity = # of items each array can maximally contain
         indices: []usize = &[_]usize{},
         ids: []usize = &[_]usize{},
         items: []T = &[_]T{},
         capacity: usize = 0,
 
-        pub const empty = @This(){};
+        pub const empty = @This(){
+            .indices = &.{},
+            .ids = &.{},
+            .items = &.{},
+            .capacity = 0,
+        };
 
         pub const Slice = if (alignment) |a| ([]align(a.toByteUnits()) T) else []T;
 
@@ -320,53 +329,92 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             allo.free(self.allocatedItemSlice());
             allo.free(self.allocatedItemSlice());
             allo.free(self.allocatedIdSlice());
+
             self.indices.len = 0;
             self.ids.len = 0;
             self.items.len = 0;
+
             self.capacity = 0;
         }
 
-        /// If current capacity is less than new capacity, this fn will modify the array
-        /// to hold at least `new capacity` items.
-        /// Invalidates element pointers if additional memory is needed.
-        pub fn ensureTotalCapacity(self: *@This(), new_capacity: usize) Allocator.Error!void {
-            if (@sizeOf(T) == 0) {
-                self.capacity = std.math.maxInt(usize);
-                return;
-            }
-
+        /// Modify array to hold at least `new capacity` items.
+        /// Impl super-linear growth to achieve amortized O(1) append ops.
+        /// Invalidate element ptrs if additional memory is needed.
+        pub fn ensureTotalCapacity(
+            self: *@This(),
+            allo: Allocator,
+            new_capacity: usize,
+        ) Allocator.Error!void {
+            // avoid unnecessary re-allocs
             if (self.capacity >= new_capacity) return;
-
-            const better_capacity = Aligned(T, alignment).growCapacity(new_capacity);
-            return self.ensureTotalCapacityPrecise(better_capacity);
+            return self.ensureTotalCapacityPrecise(allo, growCapacity(new_capacity));
         }
 
         /// If current capacity is less than `new capacity`, this fn will modify the array
         /// so that it can hold exactly `new capacity` items.
         /// Invalidates element pointers if additional memory is needed.
-        pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) Allocator.Error!void {
-            // This fn needs to be tested for triarraylist
+        pub fn ensureTotalCapacityPrecise(
+            self: *@This(),
+            allo: Allocator,
+            new_capacity: usize,
+        ) Allocator.Error!void {
             if (@sizeOf(T) == 0) {
                 self.capacity = std.math.maxInt(usize);
                 return;
             }
-
+            // avoid unnecessary re-allocations
             if (self.capacity >= new_capacity) return;
-
             // Avoid copying allocated but unused bytes by attempting resizing in place.
             // Fall back to allocating a new buffer and doing a copy.
             // With a realloc() call, the allocated impl would pointlessly copy our extra capacity.
-            const old_memory = self.allocatedItemSlice();
-            if (allo.remap(old_memory, new_capacity)) |new_memory| {
-                self.items.ptr = new_memory.ptr;
-                self.capacity = new_memory.len;
-            } else {
-                const new_memory = try allo.alignedAlloc(T, alignment, new_capacity);
-                @memcpy(new_memory[0..self.items.len], self.items);
-                self.allo.free(old_memory);
-                self.items.ptr = new_memory.ptr;
-                self.capacity = new_memory.len;
+            {
+                const old_memory = self.allocatedIndexSlice();
+                if (allo.remap(old_memory, new_capacity)) |new_memory| {
+                    self.indices.ptr = new_memory.ptr;
+                } else {
+                    const new_memory = try allo.alignedAlloc(usize, @alignOf(usize), new_capacity);
+                    @memcpy(new_memory[0..self.indices.len], self.indices);
+                    self.allo.free(old_memory);
+                    self.indices.ptr = new_memory.ptr;
+                }
             }
+            {
+                const old_memory = self.allocatedIdSlice();
+                if (allo.remap(old_memory, new_capacity)) |new_memory| {
+                    self.ids.ptr = new_memory.ptr;
+                } else {
+                    const new_memory = try allo.alignedAlloc(usize, @alignOf(usize), new_capacity);
+                    @memcpy(new_memory[0..self.ids.len], self.ids);
+                    self.allo.free(old_memory);
+                    self.ids.ptr = new_memory.ptr;
+                }
+            }
+            {
+                const old_memory = self.allocatedItemSlice();
+                if (allo.remap(old_memory, new_capacity)) |new_memory| {
+                    self.items.ptr = new_memory.ptr;
+                    self.capacity = new_memory.len;
+                } else {
+                    const new_memory = try allo.alignedAlloc(T, alignment, new_capacity);
+                    @memcpy(new_memory[0..self.items.len], self.items);
+                    self.allo.free(old_memory);
+                    self.items.ptr = new_memory.ptr;
+                    self.capacity = new_memory.len;
+                }
+            }
+        }
+
+        /// Modify array to hold at least `additional count` items.
+        /// Invalidates element pointers if additional memory is needed.
+        pub fn ensureUnusedCapacity(
+            self: *@This(),
+            allo: Allocator,
+            additonal_count: usize,
+        ) Allocator.Error!void {
+            return self.ensureTotalCapacity(
+                allo,
+                try addOrOom(self.items.len, additional_count),
+            );
         }
 
         pub fn growCapacity(min: usize) usize {
