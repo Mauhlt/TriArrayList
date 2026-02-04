@@ -46,7 +46,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// Init with externally managed memory
         /// Buffer determines capacity + length set to 0
         /// All fns that accept allocator will cause illegal behavior
-        pub fn initSliceBuffer(
+        pub fn initSlice(
             index_buffer: Slice,
             id_buffer: Slice,
             item_buffer: Slice,
@@ -64,7 +64,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// Init with externally managed memory
         /// Buffer deterimines capacity + length set to 0
         /// All fns that accept allocator will cause illegal behavior
-        pub fn initSentinelBuffer(
+        pub fn initSentinelSlice(
             comptime sentinel: T,
             index_buffer: [:sentinel]T,
             id_buffer: [:sentinel]T,
@@ -114,8 +114,8 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         pub fn fromOwnedSentinelSlice(
-            comptime sentinel: T,
             allo: Allocator,
+            comptime sentinel: T,
             slice: [:sentinel]T,
         ) @This() {
             const len = slice.len + 1;
@@ -138,8 +138,8 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             };
         }
 
-        /// Caller owns memory.
-        /// Empties triarraylist.
+        /// Caller owns memory - returns slice of items.
+        /// Empties TriArrayList.
         /// Capacity is cleared.
         /// Deinit is unnecessary but safe.
         pub fn toOwnedSlice(self: *@This(), allo: Allocator) []T {
@@ -157,7 +157,9 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return new_memory;
         }
 
-        /// Caller owns memory. Empties this TriArrayList.
+        /// Caller owns memory.
+        /// Empties this TriArrayList.
+        /// Deinit unnecessary but safe.
         pub fn toOwnedSliceSentinel(
             self: *@This(),
             comptime sentinel: T,
@@ -169,7 +171,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return result[0 .. result.len - 1 :sentinel];
         }
 
-        /// Creates copy of triarraylist
+        /// Creates copy of TriArrayList
         pub fn clone(self: *const @This(), allo: Allocator) Allocator.Error!@This() {
             var cloned: @This() = try .initCapacity(allo, self.capacity);
             cloned.appendSliceAssumeCapacity(self.items);
@@ -188,9 +190,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             index: usize,
             item: T,
         ) Allocator.Error!void {
-            try self.append(item);
-            const dst = try self.addManyAt(allo, index, 1);
-            dst[0] = item;
+            try self.append(allo, item);
         }
 
         /// TODO:
@@ -315,24 +315,6 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             new_item_ptr.* = item;
         }
 
-        pub fn appendIndex(
-            self: *@This(),
-            allo: Allocator,
-            index: usize,
-        ) Allocator.Error!void {
-            const new_item_ptr = try self.addOneIndex(allo);
-            new_item_ptr.* = index;
-        }
-
-        pub fn appendId(
-            self: *@This(),
-            allo: Allocator,
-            id: usize,
-        ) Allocator.Error!void {
-            const new_item_ptr = try self.addOneId(allo);
-            new_item_ptr.* = id;
-        }
-
         /// Extends list by 1 element.
         /// Never invalidates element pointers.
         /// Assrts that list can hold an additional item.
@@ -424,41 +406,22 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             // Avoid copying allocated but unused bytes by attempting resizing in place.
             // Fall back to allocating a new buffer and doing a copy.
             // With a realloc() call, the allocated impl would pointlessly copy our extra capacity.
-            { // Indices
-                const old_memory = self.allocatedIndexSlice();
+            var min_capacity: usize = std.math.maxInt(usize);
+            inline for (&.{ self.indices, self.ids, self.items }) |data| {
+                const len = data.*.len;
+                const old_memory = data.*[0..len];
                 if (allo.remap(old_memory, new_capacity)) |new_memory| {
-                    self.indices.ptr = new_memory.ptr;
+                    data.*.ptr = new_memory.ptr;
+                    if (new_memory.len < min_capacity) min_capacity = new_memory.len;
                 } else {
-                    const new_memory = try allo.alignedAlloc(usize, @alignOf(usize), new_capacity);
-                    @memcpy(new_memory[0..self.indices.len], self.indices);
+                    const new_memory = try allo.alignedAlloc(@TypeOf(old_memory[0]), @alignOf(@TypeOf(old_memory[0])), new_capacity);
+                    @memcpy(new_memory[0..len], old_memory);
                     self.allo.free(old_memory);
-                    self.indices.ptr = new_memory.ptr;
+                    data.*.ptr = new_memory.ptr;
+                    if (new_memory.len < min_capacity) min_capacity = new_memory.len;
                 }
             }
-            { // Ids
-                const old_memory = self.allocatedIdSlice();
-                if (allo.remap(old_memory, new_capacity)) |new_memory| {
-                    self.ids.ptr = new_memory.ptr;
-                } else {
-                    const new_memory = try allo.alignedAlloc(usize, @alignOf(usize), new_capacity);
-                    @memcpy(new_memory[0..self.ids.len], self.ids);
-                    self.allo.free(old_memory);
-                    self.ids.ptr = new_memory.ptr;
-                }
-            }
-            { // Items
-                const old_memory = self.allocatedItemSlice();
-                if (allo.remap(old_memory, new_capacity)) |new_memory| {
-                    self.items.ptr = new_memory.ptr;
-                    self.capacity = new_memory.len;
-                } else {
-                    const new_memory = try allo.alignedAlloc(T, alignment, new_capacity);
-                    @memcpy(new_memory[0..self.items.len], self.items);
-                    self.allo.free(old_memory);
-                    self.items.ptr = new_memory.ptr;
-                    self.capacity = new_memory.len;
-                }
-            }
+            self.capacity = min_capacity;
         }
 
         /// Modify array to hold at least `additional count` items.
@@ -490,18 +453,6 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             const new_len = self.items.len + 1;
             try self.ensureTotalCapacity(allo, new_len);
             return self.addOneAssumeCapacity();
-        }
-
-        pub fn addOneIndex(self: *@This(), allo: Allocator) Allocator.Error!*T {
-            const new_len = self.items.len + 1;
-            try self.ensureTotalCapacityIndices(allo, new_len);
-            return self.addOneIndexAssumeCapacity();
-        }
-
-        pub fn addOneId(self: *@This(), allo: Allocator) Allocator.Error!*T {
-            const new_len = self.items.len + 1;
-            try self.ensureTotalCapacityIds(allo, new_len);
-            return self.addOneIdAssumeCapacity();
         }
 
         /// Increase len by 1. Return ptr to new item.
