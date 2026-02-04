@@ -37,7 +37,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// Init with capacity to hold `num` items.
         /// The capacity will equal `num`.
         /// Deinit with `deinit` or `toOwnedSlice`.
-        pub fn initCapacity(allo: Allocator, num: usize) @This() {
+        pub fn initCapacity(allo: Allocator, num: usize) Allocator.Error!@This() {
             var self: @This() = .empty;
             try self.ensureTotalCapacityPrecise(allo, num);
             return self;
@@ -266,7 +266,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         /// Returns id of last item or null if empty.
-        pub fn getLastItemIdOrNull(self: @This()) usize {
+        pub fn getLastItemIdOrNull(self: @This()) ?usize {
             return if (self.items.len > 0) self.ids[self.items.len - 1] else null;
         }
 
@@ -277,7 +277,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         /// Returns last id or null.
-        pub fn getLastIdOrNull(self: @This()) usize {
+        pub fn getLastIdOrNull(self: @This()) ?usize {
             return if (self.ids.len > 0) self.ids[self.ids.len - 1] else null;
         }
 
@@ -287,7 +287,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         /// Gets last index or null for last item
-        pub fn getLastItemIndexOrNull(self: @This()) usize {
+        pub fn getLastItemIndexOrNull(self: @This()) ?usize {
             return if (self.indices.len > 0) self.indices[self.items.len - 1] else null;
         }
 
@@ -298,17 +298,17 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         /// Returns last index or null if empty.
-        pub fn getLastIndexOrNull(self: @This()) usize {
+        pub fn getLastIndexOrNull(self: @This()) ?usize {
             return if (self.indices.len > 0) self.indices[self.indices.len - 1] else null;
         }
 
         /// Returns index slice
-        pub fn allocatedIndexSlice(self: @This()) Slice {
+        pub fn allocatedIndexSlice(self: @This()) []usize {
             return self.indices.ptr[0..self.capacity];
         }
 
         /// Returns id slice
-        pub fn allocatedIdSlice(self: @This()) Slice {
+        pub fn allocatedIdSlice(self: @This()) []usize {
             return self.ids.ptr[0..self.capacity];
         }
 
@@ -318,17 +318,17 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         /// Returns slice of unused indices up to capacity
-        pub fn unusedIndexSlice(self: @This()) []T {
+        pub fn unusedIndexSlice(self: @This()) []usize {
             return self.allocatedIndexSlice()[self.indices.len..];
         }
 
         /// Returns slice of unused ids up to capacity
-        pub fn unusedIdSlice(self: @This()) []T {
+        pub fn unusedIdSlice(self: @This()) []usize {
             return self.allocatedIdSlice()[self.ids.len..];
         }
 
         /// Returns slice of unused items up to capacity
-        pub fn unusedItemsSlice(self: @This()) []T {
+        pub fn unusedItemSlice(self: @This()) Slice {
             return self.allocatedItemSlice()[self.items.len..];
         }
 
@@ -595,7 +595,7 @@ pub fn TriArrayList(comptime T: type) type {
 }
 
 test "Init" {
-    const list: TriArrayList(i32) = .empty();
+    const list: TriArrayList(i32) = .empty;
     try testing.expect(list.items.len == 0);
     try testing.expect(list.ids.len == 0);
     try testing.expect(list.indices.len == 0);
@@ -614,7 +614,7 @@ test "initCapacity" {
 
 test "clone" {
     const allo = testing.allocator;
-    var array: TriArrayList(i32) = .empty();
+    var array: TriArrayList(i32) = .empty;
     try array.append(allo, -1);
     try array.append(allo, 3);
     try array.append(allo, 5);
@@ -622,5 +622,29 @@ test "clone" {
     var cloned = try array.clone(allo);
     defer cloned.deinit(allo);
 
-    try testing.expectEqualSlices();
+    // try testing.expectEqualSlices();
+}
+
+test "Swap Remove" {
+    const allo = testing.allocator;
+    var arr: TriArrayList(i32) = .empty;
+    for (0..8) |i|
+        try arr.append(allo, @intCast(i));
+    std.debug.print("{any}\n", .{arr.items});
+    std.debug.print("{any}\n", .{arr.ids});
+    std.debug.print("{any}\n", .{arr.indices});
+
+    _ = arr.remove(2);
+    std.debug.print("{any}\n", .{arr.items});
+    std.debug.print("{any}\n", .{arr.ids});
+    std.debug.print("{any}\n", .{arr.indices});
+}
+
+test "Append" {
+    const allo = testing.allocator;
+    var arr: TriArrayList(u8) = .empty;
+    for ([]const u8{"dgefabc"}) |ch| try arr.append(allo, ch);
+    std.debug.print("{any}\n", .{arr.items});
+    std.debug.print("{any}\n", .{arr.ids});
+    std.debug.print("{any}\n", .{arr.indices});
 }
