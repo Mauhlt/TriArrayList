@@ -429,7 +429,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         pub fn ensureUnusedCapacity(
             self: *@This(),
             allo: Allocator,
-            additonal_count: usize,
+            additional_count: usize,
         ) Allocator.Error!void {
             return self.ensureTotalCapacity(
                 allo,
@@ -465,8 +465,11 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             assert(self.indices.len < self.capacity);
 
             self.items.len += 1;
-            self.ids.len = self.items.len;
-            self.indices.len = self.indices.len;
+            // other two can be greater than but never less than items length
+            if (self.ids.len < self.items.len)
+                self.ids.len = self.items.len;
+            if (self.indices.len < self.items.len)
+                self.indices.len = self.items.len;
 
             return &self.items[self.items.len - 1];
         }
