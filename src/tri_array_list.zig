@@ -443,16 +443,106 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             assert(self.items.len < self.capacity);
             assert(self.ids.len < self.capacity);
             assert(self.indices.len < self.capacity);
+
             self.items.len += 1;
             self.ids.len = self.items.len;
             self.indices.len = self.indices.len;
+
             return &self.items[self.items.len - 1];
         }
 
+        /// Increase length by 1. Return pointer to new item
+        /// Never invalidate element pointers.
+        /// Return element pointer becomes invalid when list is resized.
+        /// If list lacks unused capacity, returns error.OutOfMemory.
+        pub fn addOneBounded(self: *@This()) error{OutOfMemory}!*T {
+            if (self.capacity - self.items.len < 1) return error.OutOfMemory;
+            return addOneAssumeCapacity(self);
+        }
+
+        /// Resize array. Add `n` elements with `undefined` values.
+        /// Return value is an array pointing to newly allocated elements.
+        /// Returned pointer invalidated when list is resized.
+        pub fn addManyAsArray(self: *@This(), allo: Allocator, comptime n: usize) Allocator.Error!*[n]T {
+            const prev_len = self.items.len;
+            try self.resize(allo, try addOrOom(self.items.len, n));
+            return self.items[prev_len..][0..n];
+        }
+
+        /// Resize array. Add `n` elements with `undefined` values.
+        /// Return value = array pointing to newly allocated elements.
+        /// Never invalidates element pointers.
+        /// Returned pointer becomes invalid when list is resized.
+        /// Asserts that list can hold additional items
+        pub fn addManyAsArrayAssumeCapacity(self: *@This(), comptime n: usize) *[n]T {
+            assert(self.items.len + n <= self.capacity);
+            const prev_len = self.items.len;
+            self.items.len += n;
+            return self.items[prev_len..][0..n];
+        }
+
+        /// Resize array. Add `n` elements with `undefined` values.
+        /// Return value is an array pointing to newly allocated elements.
+        /// Never invalidates pointers.
+        /// Returned element pointers become invalidated when list is resized.
+        /// If list lacks unused capacity, returns error.OutOfMemory.
+        pub fn addManyAsArrayBounded(
+            self: *@This(),
+            comptime n: usize,
+        ) error{OutOfMemory}!*[n]T {
+            if (self.capacity - self.items.len < n) return error.OutOfMemory;
+            return addManyAsArrayAssumeCapacity(self, n);
+        }
+
+        /// Resize array. Add `n` elements with `undefined` values.
+        /// Return value is a slice pointing to newly allocated elements.
+        /// Returned pointer becomes invalid when list is resized.
+        /// Resizes list if `self.capacity` is not large enough.
+        pub fn addManyAsSlice(
+            self: *@This(),
+            allo: Allocator,
+            n: usize,
+        ) Allocator.Error![]T {
+            const prev_len = self.items.len;
+            try self.resize(allo, try addOrOom(self.items.len, n));
+            return self.items[prev_len..][0..n];
+        }
+
+        /// Resize array. Add `n` elements with `undefined` values.
+        /// Return a slice pointing to newly allocated elements.
+        /// Never invalidates element pointers.
+        /// Returned pointer is invalidated when list is resized.
+        /// Asserts list can hold additional items.
+        pub fn addManyAsSliceAssumeCapacity(self: *@This(), n: usize) []T {
+            assert(self.items.len + n <= self.capacity);
+            const prev_len = self.items.len;
+            self.items.len += n;
+            return self.items[prev_len..][0..n];
+        }
+
+        /// Resize array. Add `n` new elements with `undefined` values.
+        /// Return slice pointing to newly allocated elements.
+        /// Never invalidates element pointers. Returned pointer is invalidated
+        /// when list is resized.
+        /// IF list lacks unused capacity, returns error.OutOfMemmory.
+        pub fn addManyAsSliceBounded(self: *@This(), n: usize) error{OutOfMemory}![]T {
+            if (self.capacity - self.items.len < n) return error.OutOfMemory;
+            return addManyAsSliceAssumeCapacity(self, n);
+        }
+
+        /// Called when growing memory.
+        /// Returns a capacity larger than minimum = super-linear growth.
+        /// Superlinear growth amortizes memory calls to O(1).
         pub fn growCapacity(min: usize) usize {
-            return min +| (min / 2 + init_capacity);
+            return min +| ((min / 2) + init_capacity);
         }
     };
+}
+
+fn addOrOom(a: usize, b: usize) error{OutOfMemory}!usize {
+    const result, const overflow = @addWithOverflow(a, b);
+    if (overflow != 0) return error.OutOfMemory;
+    return result;
 }
 
 pub fn TriArrayList(comptime T: type) type {
