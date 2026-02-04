@@ -1,4 +1,5 @@
 const std = @import("std");
+const testing = std.testing;
 const Alignment = std.mem.Alignment;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
@@ -226,13 +227,147 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return self.allocatedItemSlice()[self.items.len..];
         }
 
-        pub fn toOwnedSlice() []T {}
+        /// Caller owns memory. Empties tri-array-list.
+        /// Its capacity is cleared, making `deinit` unnecessary but safe.
+        pub fn toOwnedSlice(self: *@This(), allo: Allocator) []T {
+            const old_memory = self.allocatedItemSlice();
+            if (allo.remap(old_memory, self.items.len)) |new_items| {
+                allo.free(self.indices);
+                allo.free(self.ids);
+                self.* = .empty;
+                return new_items;
+            }
 
-        pub fn append(self: *@This(), allo: Allocator) !void {
-            if (self.items.len < self.capacity) {}
+            const new_memory = try allo.alignedAlloc(T, alignment, self.items.len);
+            @memcpy(new_memory, self.items);
+            self.clearAndFree(allo);
+            return new_memory;
         }
 
-        pub fn appendAssumeCapacity(self: *@This()) void {}
+        /// Caller owns memory. Empties this TriArrayList.
+        pub fn toOwnedSliceSentinel(
+            self: *@This(),
+            comptime sentinel: T,
+        ) [:sentinel]T {
+            try self.ensureTotalCapacityPrecise(self.items.len + 1);
+            self.appendAssumeCapacity(sentinel);
+            const result = try self.toOwnedSlice();
+            return result[0 .. result.len - 1 :sentinel];
+        }
+
+        /// Creates copy of triarraylist
+        pub fn clone(self: *const @This(), allo: Allocator) Allocator.Error!@This() {
+            var cloned: @This() = try .initCapacity(allo, self.capacity);
+            cloned.appendSliceAssumeCapacity(self.items);
+            return cloned;
+        }
+
+        /// Extends list by 1 element. Allocates more memory as necessary.
+        /// Invalidates element pointers if more memory needed.
+        pub fn append(self: *@This(), item: T) Allocator.Error!void {
+            const new_item_ptr = try self.addOne();
+            new_item_ptr.* = item;
+        }
+
+        /// Extends list by 1 element.
+        /// Never invalidates element pointers.
+        /// Assrts that list can hold an additional item.
+        pub fn appendAssumeCapacity(self: *@This(), item: T) void {
+            self.addOneAssumeCapacity().* = item;
+        }
+
+        /// Append slice of items to items.
+        /// If necessary, allocates items.
+        /// Invalidates element pointers if additional memory is needed.
+        pub fn appendSlice(self: *@This(), items: []const T) void {
+            try self.ensureUnusedCapacity(items.len);
+            self.appendSliceAssumeCapacity(items);
+        }
+
+        pub fn appendSliceAssumeCapacity(self: *@This(), items: []const T) void {
+            const old_len = self.items.len;
+            const new_len = old_len + items.len;
+            assert(new_len <= self.capacity);
+            @memcpy(self.items[old_len..][0..items.len], items);
+        }
+
+        pub fn shrinkRetainingCapacity(self: *@This(), new_len: usize) void {
+            assert(new_len < self.items.len);
+
+            @memset(self.items[new_len], undefined);
+            @memset(self.ids[new_len..], undefined);
+            @memset(self.items[new_len..], undefined);
+
+            self.indices.len = new_len;
+            self.items.len = new_len;
+            self.ids.len = new_len;
+        }
+
+        /// Reduce length to 0.
+        /// Invalidate all element pointers
+        pub fn clearRetainingCapacity(self: *@This()) void {
+            @memset(self.indices, undefined);
+            @memset(self.ids, undefined);
+            @memset(self.items, undefined);
+
+            self.indices.len = 0;
+            self.ids.len = 0;
+            self.items.len = 0;
+        }
+
+        /// Invalidate all element pointers
+        pub fn clearAndFree(self: *@This(), allo: Allocator) void {
+            allo.free(self.allocatedItemSlice());
+            allo.free(self.allocatedItemSlice());
+            allo.free(self.allocatedIdSlice());
+            self.indices.len = 0;
+            self.ids.len = 0;
+            self.items.len = 0;
+            self.capacity = 0;
+        }
+
+        /// If current capacity is less than new capacity, this fn will modify the array
+        /// to hold at least `new capacity` items.
+        /// Invalidates element pointers if additional memory is needed.
+        pub fn ensureTotalCapacity(self: *@This(), new_capacity: usize) Allocator.Error!void {
+            if (@sizeOf(T) == 0) {
+                self.capacity = std.math.maxInt(usize);
+                return;
+            }
+
+            if (self.capacity >= new_capacity) return;
+
+            const better_capacity = Aligned(T, alignment).growCapacity(new_capacity);
+            return self.ensureTotalCapacityPrecise(better_capacity);
+        }
+
+        /// If current capacity is less than `new capacity`, this fn will modify the array
+        /// so that it can hold exactly `new capacity` items.
+        /// Invalidates element pointers if additional memory is needed.
+        pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) Allocator.Error!void {
+            // This fn needs to be tested for triarraylist
+            if (@sizeOf(T) == 0) {
+                self.capacity = std.math.maxInt(usize);
+                return;
+            }
+
+            if (self.capacity >= new_capacity) return;
+
+            // Avoid copying allocated but unused bytes by attempting resizing in place.
+            // Fall back to allocating a new buffer and doing a copy.
+            // With a realloc() call, the allocated impl would pointlessly copy our extra capacity.
+            const old_memory = self.allocatedItemSlice();
+            if (allo.remap(old_memory, new_capacity)) |new_memory| {
+                self.items.ptr = new_memory.ptr;
+                self.capacity = new_memory.len;
+            } else {
+                const new_memory = try allo.alignedAlloc(T, alignment, new_capacity);
+                @memcpy(new_memory[0..self.items.len], self.items);
+                self.allo.free(old_memory);
+                self.items.ptr = new_memory.ptr;
+                self.capacity = new_memory.len;
+            }
+        }
 
         pub fn growCapacity(min: usize) usize {
             return min +| (min / 2 + init_capacity);
@@ -241,3 +376,21 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
 }
 
 pub const TriArrayList = Aligned(usize);
+
+test "Init" {
+    const list: TriArrayList = .empty();
+    try testing.expect(list.items.len == 0);
+    try testing.expect(list.ids.len == 0);
+    try testing.expect(list.indices.len == 0);
+    try testing.expect(list.capacity == 0);
+}
+
+test "initCapacity" {
+    const allo = testing.allocator;
+    var list: TriArrayList = try .initCapacity(allo, 200);
+    defer list.deinit(allo);
+    try testing.expect(list.items.len == 0);
+    try testing.expect(list.ids.len == 0);
+    try testing.expect(list.indices.len == 0);
+    try testing.expect(list.capacity >= 200);
+}
