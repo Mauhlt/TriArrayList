@@ -169,6 +169,52 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return result[0 .. result.len - 1 :sentinel];
         }
 
+        /// Creates copy of triarraylist
+        pub fn clone(self: *const @This(), allo: Allocator) Allocator.Error!@This() {
+            var cloned: @This() = try .initCapacity(allo, self.capacity);
+            cloned.appendSliceAssumeCapacity(self.items);
+            return cloned;
+        }
+
+        /// TODO:
+        /// Append `item` to items
+        /// Append `index` to indices
+        /// Swap `index` to its index
+        /// Append `id` to its id
+        /// Brings operation down to O(1)
+        pub fn insert(
+            self: *@This(),
+            allo: Allocator,
+            index: usize,
+            item: T,
+        ) Allocator.Error!void {
+            try self.append(item);
+            const dst = try self.addManyAt(allo, index, 1);
+            dst[0] = item;
+        }
+
+        /// TODO:
+        /// 1. appends data
+        /// 2. appends index
+        /// 3. swaps index to correct position
+        pub fn insertAssumeCapacity(self: *@This(), index: usize, item: T) void {
+            assert(self.items.len < self.capacity);
+            self.items.len += 1;
+            @memmove(self.items[i + 1 .. self.items.len], self.items[i .. self.items.len - 1]);
+            self.items[i] = item;
+        }
+
+        /// Append `item` to items
+        /// Append `index` to indices
+        /// Swap `index` to its position
+        /// O(1)
+        /// if list lacks unused capacity for additional items, return error.OutOfMemory
+        /// Asserts that index is in bounds or equal to length
+        pub fn insertBounded(self: *@This(), index: usize, item: T) error{OutOfMemory}!void {
+            if (self.capacity - self.items.len == 0) return error.OutOfMemory;
+            return insertAssumeCapacity(self, index, item);
+        }
+
         /// Remove and return last item from items
         /// If items is empty, return `null`
         /// Invalidate pointers to last item
@@ -264,18 +310,27 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return self.allocatedItemSlice()[self.items.len..];
         }
 
-        /// Creates copy of triarraylist
-        pub fn clone(self: *const @This(), allo: Allocator) Allocator.Error!@This() {
-            var cloned: @This() = try .initCapacity(allo, self.capacity);
-            cloned.appendSliceAssumeCapacity(self.items);
-            return cloned;
+        pub fn append(self: *@This(), allo: Allocator, item: T) Allocator.Error!void {
+            const new_item_ptr = try self.addOne(allo);
+            new_item_ptr.* = item;
         }
 
-        /// Extends list by 1 element. Allocates more memory as necessary.
-        /// Invalidates element pointers if more memory needed.
-        pub fn append(self: *@This(), item: T) Allocator.Error!void {
-            const new_item_ptr = try self.addOne();
-            new_item_ptr.* = item;
+        pub fn appendIndex(
+            self: *@This(),
+            allo: Allocator,
+            index: usize,
+        ) Allocator.Error!void {
+            const new_item_ptr = try self.addOneIndex(allo);
+            new_item_ptr.* = index;
+        }
+
+        pub fn appendId(
+            self: *@This(),
+            allo: Allocator,
+            id: usize,
+        ) Allocator.Error!void {
+            const new_item_ptr = try self.addOneId(allo);
+            new_item_ptr.* = id;
         }
 
         /// Extends list by 1 element.
@@ -339,7 +394,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
 
         /// Modify array to hold at least `new capacity` items.
         /// Impl super-linear growth to achieve amortized O(1) append ops.
-        /// Invalidate element ptrs if additional memory is needed.
+        /// Invalidate element ptrs if additional memory needed.
         pub fn ensureTotalCapacity(
             self: *@This(),
             allo: Allocator,
@@ -348,6 +403,30 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             // avoid unnecessary re-allocs
             if (self.capacity >= new_capacity) return;
             return self.ensureTotalCapacityPrecise(allo, growCapacity(new_capacity));
+        }
+
+        /// Modify array to hold at least `new capacity` items.
+        /// Impl super-linear growth to achieve amortized O(1) append ops.
+        /// Invalidate element ptrs if additional memory needed.
+        pub fn ensureTotalIndexCapacity(
+            self: *@This(),
+            allo: Allocator,
+            new_capacity: usize,
+        ) Allocator.Error!void {
+            if (self.capacity >= new_capacity) return;
+            return self.ensureTotalIndexCapacityPrecise(allo, growCapacity(new_capacity));
+        }
+
+        /// Modify array to hold at least `new capacity` items.
+        /// Impl super-linear growth to achieve amortized O(1) append ops.
+        /// Invalidate element ptrs if additional memory needed.
+        pub fn ensureTotalIdCapacity(
+            self: *@This(),
+            allo: Allocator,
+            new_capacity: usize,
+        ) Allocator.Error!void {
+            if (self.capacity >= new_capacity) return;
+            return self.EnsureTotalIdCapacity(allo, growCapacity(new_capacity));
         }
 
         /// If current capacity is less than `new capacity`, this fn will modify the array
@@ -433,6 +512,18 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             const new_len = self.items.len + 1;
             try self.ensureTotalCapacity(allo, new_len);
             return self.addOneAssumeCapacity();
+        }
+
+        pub fn addOneIndex(self: *@This(), allo: Allocator) Allocator.Error!*T {
+            const new_len = self.items.len + 1;
+            try self.ensureTotalCapacityIndices(allo, new_len);
+            return self.addOneIndexAssumeCapacity();
+        }
+
+        pub fn addOneId(self: *@This(), allo: Allocator) Allocator.Error!*T {
+            const new_len = self.items.len + 1;
+            try self.ensureTotalCapacityIds(allo, new_len);
+            return self.addOneIdAssumeCapacity();
         }
 
         /// Increase len by 1. Return ptr to new item.
