@@ -190,7 +190,8 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             index: usize,
             item: T,
         ) Allocator.Error!void {
-            try self.append(allo, item);
+            const dst = try self.addManyAt(allo, index, 1);
+            dst[0] = item;
         }
 
         /// TODO:
@@ -200,7 +201,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         pub fn insertAssumeCapacity(self: *@This(), index: usize, item: T) void {
             assert(self.items.len < self.capacity);
             self.items.len += 1;
-            @memmove(self.items[i + 1 .. self.items.len], self.items[i .. self.items.len - 1]);
+            @memmove(self.items[index + 1 .. self.items.len], self.items[i .. self.items.len - 1]);
             self.items[i] = item;
         }
 
@@ -213,6 +214,27 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         pub fn insertBounded(self: *@This(), index: usize, item: T) error{OutOfMemory}!void {
             if (self.capacity - self.items.len == 0) return error.OutOfMemory;
             return insertAssumeCapacity(self, index, item);
+        }
+
+        /// Uses swap remove only - no ordered remove
+        /// Removes element at specified index and returns it.
+        /// Empty slot filled from end of list.
+        /// Invalidates ptrs to last element.
+        /// O(1).
+        /// Asserts index is in bounds.
+        pub fn remove(self: *@This(), index: usize) T {
+            const idx = self.indices[index];
+            const val = self.items[idx];
+            const last_idx = self.items.len - 1;
+
+            self.items[idx] = self.items[last_idx];
+            self.items[last_idx] = undefined;
+
+            self.ids[idx] = self.ids[last_idx];
+            self.indices[idx] = last_idx;
+
+            self.items.len -= 1;
+            return val;
         }
 
         /// Remove and return last item from items
