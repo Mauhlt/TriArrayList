@@ -375,10 +375,12 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
     };
 }
 
-pub const TriArrayList = Aligned(usize);
+pub fn TriArrayList(comptime T: type) type {
+    return Aligned(T, null);
+}
 
 test "Init" {
-    const list: TriArrayList = .empty();
+    const list: TriArrayList(i32) = .empty();
     try testing.expect(list.items.len == 0);
     try testing.expect(list.ids.len == 0);
     try testing.expect(list.indices.len == 0);
@@ -387,10 +389,23 @@ test "Init" {
 
 test "initCapacity" {
     const allo = testing.allocator;
-    var list: TriArrayList = try .initCapacity(allo, 200);
+    var list: TriArrayList(i32) = try .initCapacity(allo, 200);
     defer list.deinit(allo);
     try testing.expect(list.items.len == 0);
     try testing.expect(list.ids.len == 0);
     try testing.expect(list.indices.len == 0);
     try testing.expect(list.capacity >= 200);
+}
+
+test "clone" {
+    const allo = testing.allocator;
+    var array: TriArrayList(i32) = .empty();
+    try array.append(allo, -1);
+    try array.append(allo, 3);
+    try array.append(allo, 5);
+
+    var cloned = try array.clone(allo);
+    defer cloned.deinit(allo);
+
+    try testing.expectEqualSlices();
 }
