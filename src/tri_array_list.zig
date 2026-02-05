@@ -184,30 +184,63 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return cloned;
         }
 
-        /// Remove: uses swapAndPop to remove last item of data
-        /// Asserts index is in bounds.
-        /// O(1)
-        pub fn popByIndex(self: *@This(), index: usize) T {
-            // check that index is within items len
-            if (@import("builtin").mode == .Debug) assert(index < self.items.len);
-            const idx = self.indices[index];
-            const last_idx = self.items.len - 1;
-            if (idx == last_idx) {
-                const val = self.items[idx];
-                self.items.len -= 1;
-                return val;
-            }
-            const val = self.items[idx];
-            // idx values: 1. index, 2. 
-            std.mem.swap(T, &self.items[idx], &self.items[last_idx]); // swap the items
-            std.mem.swap(usize, &self.id[idx], &self.id[last_idx]); // swap what their ids pt to
-            std.mem.swap(usize, &self.indices[index], &self.indices[]); // swap their indices
-            self.items.len -= 1;
-            return val;
+        /// O(1) append
+        pub fn append(self: *@This(), allo: Allocator, item: T) void {
+            try self.ensureTotalCapacity(allo, self.items.len + 1);
+            self.appendAssumeCapacity(item);
         }
 
-        pub fn removeById(self: *@This(), id: usize) T {
-            const idx = self.ids[id];
+        /// O(1)
+        /// Extends items by 1 item.
+        /// Never invalidates element pointers
+        /// Asserts lists can hold an additional item
+        /// for indies and ids:
+        /// if same size add 1 to length + store value
+        /// otherwise use default value in that position
+        pub fn appendAssumeCapacity(self: *@This(), item: T) void {
+            const len = self.items.len;
+            self.items.len += 1;
+            self.items[len] = item;
+            if (len == self.indices.len) {
+                self.indices.len += 1;
+                self.indices[len] = len;
+            }
+            if (len == self.ids.len) {
+                self.ids.len += 1;
+                self.ids[len] = len;
+            }
+        }
+
+        /// O(n)
+        /// Extends self.items by n items
+        /// Never invalidates element pointers
+        /// Asserts self.items can hold additional n items.
+        /// for indices and ids:
+        /// if larger, use pre-defined values
+        /// if smaller, extend list, set new values as their positions
+        pub fn appendSliceAssumeCapacity(self: *@This(), items: []T) void {
+            const old_len = self.items.len;
+            const new_len = old_len + items.len;
+            self.items.len = new_len;
+            @memcpy(self.items[old_len..][0..items.len], items);
+
+            if (self.indices.len < new_len) {
+                const old_len_indices = self.indices.len;
+                self.indices.len = new_len;
+                // use simd to quickly create indices
+                var i: usize = old_len_indices;
+                const v = std.simd.iota(usize, 64);
+                while (i + 64 < new_len) :(i += 64) {
+                    self.indices[i..][0..64].* = 
+                }
+                // loop for leftover
+                for (old_len_indices..new_len) |i| self.indices[i] = i;
+            }
+            if (self.ids.len < new_len) {
+                const old_len_ids = self.ids.len;
+                self.ids.len = new_len;
+                for (old_len_ids..new_len) |i| self.ids[i] = i;
+            }
         }
 
         /// Remove and return last item from items
@@ -412,14 +445,26 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
     };
 }
 
+/// Checks if adding new memory causes overflow = out of bounds
 fn addOrOom(a: usize, b: usize) error{OutOfMemory}!usize {
     const result, const overflow = @addWithOverflow(a, b);
     if (overflow != 0) return error.OutOfMemory;
     return result;
 }
 
+/// Creates default type for ease of use.
 pub fn TriArrayList(comptime T: type) type {
     return Aligned(T, null);
+}
+
+/// Adds new indices to list of usize.
+fn fillIndices(comptime T: usize, list: []usize, start_index: usize) void {
+    var i: usize = start_index;
+    const stairs = std.simd.iota(usize, 64);
+    const len = list.len;
+    while (i + 64 < len) :(i += 64) 
+        list[i..][0..64].* = @as(@Vector(64, usize), @splat(i)) + stairs;
+    for (i..len) |j| list[j] = j;
 }
 
 test "Init" {
