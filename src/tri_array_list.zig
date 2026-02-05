@@ -262,9 +262,26 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
 
         /// Gets items by indices
         /// Swaps items and their ids
-        pub fn swapByIndex(self: *@This(), index: usize) void {}
+        pub fn swapByIndex(self: *@This(), index1: usize, index2: usize) void {
+            assert(self.indices.len > index1);
+            assert(self.indices.len > index2);
 
-        pub fn swapById(self: *@This(), id: usize) void {}
+            const idx1 = self.indices[index1];
+            const idx2 = self.indices[index2];
+
+            std.mem.swap(T, &self.items[idx1], &self.items[idx2]);
+        }
+
+        /// Gets item by id.
+        pub fn swapById(self: *@This(), id1: usize, id2: usize) void {
+            assert(id1 < self.ids.len);
+            assert(id2 < self.ids.len);
+
+            const idx1 = self.ids[id1];
+            const idx2 = self.ids[id2];
+
+            std.mem.swap(T, &self.items[idx1], &self.items[idx2]);
+        }
 
         pub fn findId(self: *const @This(), id: usize) usize {
             for (self.ids, 0..) |curr_id, i| if (curr_id == id) return i;
