@@ -177,7 +177,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return result[0 .. result.len - 1 :sentinel];
         }
 
-        /// Creates copy of TriArrayList
+        /// Creates deep copy of TriArrayList
         pub fn clone(self: *const @This(), allo: Allocator) Allocator.Error!@This() {
             var cloned: @This() = try .initCapacity(allo, self.capacity);
             cloned.appendSliceAssumeCapacity(self.items);
@@ -185,7 +185,11 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         /// O(1) append
-        pub fn append(self: *@This(), allo: Allocator, item: T) void {
+        /// Checks if memory can be allocated if necessary - returns error if needed but can't
+        /// Extends self.items by 1.
+        /// If needed, extends self.ids and self.indices by 1.
+        /// Never invalidates element pointers
+        pub fn append(self: *@This(), allo: Allocator, item: T) Allocator.Error!void {
             try self.ensureTotalCapacity(allo, self.items.len + 1);
             self.appendAssumeCapacity(item);
         }
