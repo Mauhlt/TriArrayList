@@ -268,8 +268,9 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// O(1)
         /// Asserts that items is not empty
         pub fn remove(self: *@This(), index: usize) T {
-            assert(index < self.items.len);
+            assert(index < self.indices.len);
             const id = self.indices[index];
+            assert(id < self.items.len);
             const last_id = self.items.len - 1;
             if (id == last_id) return self.pop();
             std.mem.swap(T, &self.items[id], &self.items[last_id]);
@@ -279,14 +280,15 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         pub fn removeOrNull(self: *@This(), index: usize) ?T {
-            assert(index < self.items.len);
+            assert(index < self.indices.len);
             const id = self.indices[index];
+            if (id >= self.items.len) return null;
             const last_id = self.items.len - 1;
-            if (id == last_id) return self.popOrNull();
+            if (id == last_id) return self.pop();
             std.mem.swap(T, &self.items[id], &self.items[last_id]);
             std.mem.swap(usize, &self.ids[id], &self.ids[last_id]);
             std.mem.swap(usize, &self.indices[self.ids[id]], &self.indices[self.ids[last_id]]);
-            return self.popOrNull();
+            return self.pop();
         }
 
         pub fn findId(self: *const @This(), id: usize) usize {
