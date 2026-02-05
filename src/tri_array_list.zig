@@ -249,6 +249,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         /// Remove and return last item from items
+        /// O(1)
         pub fn pop(self: *@This()) T {
             const val = self.getLastItem();
             self.items.len -= 1;
@@ -277,7 +278,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         pub fn removeOrNull(self: *@This(), index: usize) ?T {
-            assert(index < self.indices.len);
+            if (index >= self.indices.len) return null;
             const id = self.indices[index];
             if (id >= self.items.len) return null;
             const last_id = self.items.len - 1;
