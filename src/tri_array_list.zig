@@ -291,6 +291,26 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return self.pop();
         }
 
+        /// Sort data by indices
+        pub fn sortByIndex(self: *@This()) void {
+            const ctx: Context = .{
+                .indices = self.indices,
+                .ids = self.ids,
+                .items = self.items,
+            };
+            std.sort.pdq(usize, self.indices, ctx, ctx.lessThanFn);
+        }
+
+        /// Sort data by ids
+        pub fn sortById(self: *@This()) void {
+            const ctx: Context = .{
+                .indices = self.indices,
+                .ids = self.ids,
+                .items = self.items,
+            };
+            std.sort.pdq(usize, self.ids, ctx, ctx.lessThanFn);
+        }
+
         pub fn findId(self: *const @This(), id: usize) usize {
             for (self.ids, 0..) |curr_id, i| if (curr_id == id) return i;
             unreachable;
@@ -501,6 +521,23 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         pub fn growCapacity(min: usize) usize {
             return min +| ((min / 2) + init_capacity);
         }
+
+        /// Context - used to sort data
+        const Context = struct {
+            indices: []usize,
+            ids: []usize,
+            items: []T,
+
+            pub fn lessThanFn(_: void, a: usize, b: usize) bool {
+                return a < b;
+            }
+
+            pub fn swap(ctx: @This(), a: usize, b: usize) void {
+                std.mem.swap(T, &ctx.items[a], &ctx.items[b]);
+                std.mem.swap(usize, &ctx.ids[a], &ctx.ids[b]);
+                std.mem.swap(usize, &ctx.indices[a], &ctx.indices[b]);
+            }
+        };
     };
 }
 
