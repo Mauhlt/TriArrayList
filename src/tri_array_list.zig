@@ -214,6 +214,22 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// O(n)
         /// Extends self.items by n items
         /// Never invalidates element pointers
+        /// Asserts self.items can hold addition n items.
+        /// for indices and ids:
+        /// If larger, preset values are used.
+        /// If smaller, allocates memory -> extends list -> sets values
+        pub fn appendSlice(
+            self: *@This(),
+            allo: Allocator,
+            items: []T,
+        ) Allocator.Error!void {
+            try self.ensureTotalCapacity(allo, self.items.len + items.len);
+            self.appendAssumeCapacity(items);
+        }
+
+        /// O(n)
+        /// Extends self.items by n items
+        /// Never invalidates element pointers
         /// Asserts self.items can hold additional n items.
         /// for indices and ids:
         /// if larger, use pre-defined values
@@ -223,23 +239,15 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             const new_len = old_len + items.len;
             self.items.len = new_len;
             @memcpy(self.items[old_len..][0..items.len], items);
-
             if (self.indices.len < new_len) {
                 const old_len_indices = self.indices.len;
                 self.indices.len = new_len;
-                // use simd to quickly create indices
-                var i: usize = old_len_indices;
-                const v = std.simd.iota(usize, 64);
-                while (i + 64 < new_len) :(i += 64) {
-                    self.indices[i..][0..64].* = 
-                }
-                // loop for leftover
-                for (old_len_indices..new_len) |i| self.indices[i] = i;
+                fillIndices(self.indices[old_len_indices..], old_len_indices);
             }
             if (self.ids.len < new_len) {
                 const old_len_ids = self.ids.len;
                 self.ids.len = new_len;
-                for (old_len_ids..new_len) |i| self.ids[i] = i;
+                fillIndices(self.ids[old_len_ids..], old_len_ids);
             }
         }
 
@@ -458,11 +466,11 @@ pub fn TriArrayList(comptime T: type) type {
 }
 
 /// Adds new indices to list of usize.
-fn fillIndices(comptime T: usize, list: []usize, start_index: usize) void {
+fn fillIndices(list: []usize, start_index: usize) void {
     var i: usize = start_index;
     const stairs = std.simd.iota(usize, 64);
     const len = list.len;
-    while (i + 64 < len) :(i += 64) 
+    while (i + 64 < len) : (i += 64)
         list[i..][0..64].* = @as(@Vector(64, usize), @splat(i)) + stairs;
     for (i..len) |j| list[j] = j;
 }
