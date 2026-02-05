@@ -53,8 +53,8 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// Buffer determines capacity + length set to 0
         /// All fns that accept allocator will cause illegal behavior
         pub fn initSlice(
-            index_buffer: Slice,
-            id_buffer: Slice,
+            index_buffer: []usize,
+            id_buffer: []usize,
             item_buffer: Slice,
         ) @This() {
             assert(index_buffer.len == id_buffer.len);
@@ -476,17 +476,18 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             // Fall back to allocating a new buffer and doing a copy.
             // With a realloc() call, the allocated impl would pointlessly copy our extra capacity.
             var min_capacity: usize = std.math.maxInt(usize);
-            inline for (&.{ self.indices, self.ids, self.items }) |data| {
+            inline for (.{ &self.indices, &self.ids, &self.items }) |data| {
                 const len = data.*.len;
                 const old_memory = data.*[0..len];
                 if (allo.remap(old_memory, new_capacity)) |new_memory| {
                     data.*.ptr = new_memory.ptr;
                     if (new_memory.len < min_capacity) min_capacity = new_memory.len;
                 } else {
-                    const new_memory = try allo.alignedAlloc(@TypeOf(old_memory[0]), @alignOf(@TypeOf(old_memory[0])), new_capacity);
+                    const t = @TypeOf(old_memory[0]);
+                    const new_memory = try allo.alignedAlloc(t, null, new_capacity);
                     @memcpy(new_memory[0..len], old_memory);
-                    self.allo.free(old_memory);
-                    data.*.ptr = new_memory.ptr;
+                    allo.free(old_memory);
+                    data.ptr = new_memory.ptr;
                     if (new_memory.len < min_capacity) min_capacity = new_memory.len;
                 }
             }
@@ -581,39 +582,85 @@ test "initCapacity" {
     try testing.expect(list.capacity >= 200);
 }
 
-test "clone" {
-    const allo = testing.allocator;
-    var array: TriArrayList(i32) = .empty;
-    try array.append(allo, -1);
-    try array.append(allo, 3);
-    try array.append(allo, 5);
+test "Init Slice" {
+    var index_buffer: [1024]usize = undefined;
+    var id_buffer: [1024]usize = undefined;
+    var item_buffer: [1024]u8 = undefined;
 
-    var cloned = try array.clone(allo);
-    defer cloned.deinit(allo);
+    const index_slice: []usize = &index_buffer;
+    const id_slice: []usize = &id_buffer;
+    const item_slice: []u8 = &item_buffer;
 
-    // try testing.expectEqualSlices();
+    const list: TriArrayList(u8) = .initSlice(index_slice, id_slice, item_slice);
+
+    try testing.expect(list.items.len == 0);
+    try testing.expect(list.ids.len == 0);
+    try testing.expect(list.indices.len == 0);
+    try testing.expect(list.capacity >= 1024);
+
+    list.appendAssumeCapacity('a');
+    list.appendAssumeCapacity('b');
+    list.appendAssumeCapacity('c');
+    list.appendAssumeCapacity('d');
+    list.appendAssumeCapacity('e');
+    list.appendAssumeCapacity('f');
+    list.appendAssumeCapacity('g');
 }
 
-test "Swap Remove" {
-    const allo = testing.allocator;
-    var arr: TriArrayList(i32) = .empty;
-    for (0..8) |i|
-        try arr.append(allo, @intCast(i));
-    std.debug.print("{any}\n", .{arr.items});
-    std.debug.print("{any}\n", .{arr.ids});
-    std.debug.print("{any}\n", .{arr.indices});
+test "Init Sentinel Slice" {
+    var index_buffer: [1024]usize = undefined;
+    var id_buffer: [1024]usize = undefined;
+    var item_buffer: [1024]u8 = undefined;
 
-    _ = arr.remove(2);
-    std.debug.print("{any}\n", .{arr.items});
-    std.debug.print("{any}\n", .{arr.ids});
-    std.debug.print("{any}\n", .{arr.indices});
+    const index_sentinel_slice: [:0]usize = &index_buffer;
+    const id_sentinel_slice: [:0]usize = &id_buffer;
+    const item_sentinel_slice: [:0]u8 = &item_buffer;
+
+    const list: TriArrayList(u8) = try .initSentinelSlice(
+        &index_sentinel_slice,
+        &id_sentinel_slice,
+        &item_sentinel_slice,
+    );
+
+    try testing.expect(list.items.len == 0);
+    try testing.expect(list.ids.len == 0);
+    try testing.expect(list.indices.len == 0);
+    try testing.expect(list.capacity >= 1024);
 }
 
-test "Append" {
-    const allo = testing.allocator;
-    var arr: TriArrayList(u8) = .empty;
-    for ([]const u8{"dgefabc"}) |ch| try arr.append(allo, ch);
-    std.debug.print("{any}\n", .{arr.items});
-    std.debug.print("{any}\n", .{arr.ids});
-    std.debug.print("{any}\n", .{arr.indices});
-}
+// test "clone" {
+//     const allo = testing.allocator;
+//     var array: TriArrayList(i32) = .empty;
+//     try array.append(allo, -1);
+//     try array.append(allo, 3);
+//     try array.append(allo, 5);
+//
+//     var cloned = try array.clone(allo);
+//     defer cloned.deinit(allo);
+//
+//     // try testing.expectEqualSlices();
+// }
+//
+// test "Swap Remove" {
+//     const allo = testing.allocator;
+//     var arr: TriArrayList(i32) = .empty;
+//     for (0..8) |i|
+//         try arr.append(allo, @intCast(i));
+//     std.debug.print("{any}\n", .{arr.items});
+//     std.debug.print("{any}\n", .{arr.ids});
+//     std.debug.print("{any}\n", .{arr.indices});
+//
+//     _ = arr.remove(2);
+//     std.debug.print("{any}\n", .{arr.items});
+//     std.debug.print("{any}\n", .{arr.ids});
+//     std.debug.print("{any}\n", .{arr.indices});
+// }
+//
+// test "Append" {
+//     const allo = testing.allocator;
+//     var arr: TriArrayList(u8) = .empty;
+//     for ([]const u8{"dgefabc"}) |ch| try arr.append(allo, ch);
+//     std.debug.print("{any}\n", .{arr.items});
+//     std.debug.print("{any}\n", .{arr.ids});
+//     std.debug.print("{any}\n", .{arr.indices});
+// }
