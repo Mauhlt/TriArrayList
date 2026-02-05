@@ -74,9 +74,9 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// Allows user to change sentinel for item.
         pub fn initSentinelSlice(
             comptime sentinel: T,
-            index_buffer: *const [:0]usize,
-            id_buffer: *const [:0]usize,
-            item_buffer: *const [:sentinel]T,
+            index_buffer: [:0]usize,
+            id_buffer: [:0]usize,
+            item_buffer: [:sentinel]T,
         ) @This() {
             const len = item_buffer.len + 1;
             assert(index_buffer.len == id_buffer.len);
@@ -100,19 +100,12 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// TriArrayList takes ownership of slice.
         /// Create indices and ids using vectors and loops.
         /// Deinit with `deinit` and `toOwnedSlice`.
-        pub fn fromOwnedSlice(allo: Allocator, slice: Slice) @This() {
+        pub fn fromOwnedSlice(allo: Allocator, slice: Slice) Allocator.Error!@This() {
             const len = slice.len;
-            var indices = try allo.alignedAlloc(T, alignment, len);
-            // use vectors to quickly create values
-            const VEC_LEN: comptime_int = 64;
-            const stair = std.simd.iota(usize, VEC_LEN);
-            var i: usize = 0;
-            while (i + 64 < len) : (i += 64)
-                indices[i..][0..64].* = @as(@Vector(VEC_LEN, usize), @splat(i)) + stair;
-            for (i..len) |j| indices[i] = j;
-            // copy indices to ids
-            const ids = try allo.dupe(usize, indices);
-            // return constructor
+            const indices = try allo.alignedAlloc(usize, null, len);
+            fillIndices(indices, 0);
+            const ids = try allo.alignedAlloc(usize, null, len);
+            @memcpy(ids, indices);
             return @This(){
                 .indices = indices,
                 .ids = ids,
@@ -150,7 +143,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// Empties TriArrayList.
         /// Capacity is cleared.
         /// Deinit is unnecessary but safe.
-        pub fn toOwnedSlice(self: *@This(), allo: Allocator) []T {
+        pub fn toOwnedSlice(self: *@This(), allo: Allocator) Allocator.Error!Slice {
             const old_memory = self.allocatedItemSlice();
             if (allo.remap(old_memory, self.items.len)) |new_items| {
                 allo.free(self.indices);
@@ -227,10 +220,10 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         pub fn appendSlice(
             self: *@This(),
             allo: Allocator,
-            items: []T,
+            items: []const T,
         ) Allocator.Error!void {
             try self.ensureTotalCapacity(allo, self.items.len + items.len);
-            self.appendAssumeCapacity(items);
+            self.appendSliceAssumeCapacity(items);
         }
 
         /// O(n)
@@ -240,7 +233,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// for indices and ids:
         /// if larger, use pre-defined values
         /// if smaller, extend list, set new values as their positions
-        pub fn appendSliceAssumeCapacity(self: *@This(), items: []T) void {
+        pub fn appendSliceAssumeCapacity(self: *@This(), items: []const T) void {
             const old_len = self.items.len;
             const new_len = old_len + items.len;
             self.items.len = new_len;
@@ -440,15 +433,10 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
 
         /// Invalidate all element pointers
         pub fn clearAndFree(self: *@This(), allo: Allocator) void {
-            allo.free(self.allocatedItemSlice());
-            allo.free(self.allocatedItemSlice());
+            allo.free(self.allocatedIndexSlice());
             allo.free(self.allocatedIdSlice());
-
-            self.indices.len = 0;
-            self.ids.len = 0;
-            self.items.len = 0;
-
-            self.capacity = 0;
+            allo.free(self.allocatedItemSlice());
+            self.* = .empty;
         }
 
         /// Modify array to hold at least `new capacity` items/ids/indices.
@@ -581,22 +569,12 @@ test "Empty" {
 test "initCapacity deinit" {
     const allo = testing.allocator;
     var list: TriArrayList(i32) = try .initCapacity(allo, 200);
-    {
-        defer list.deinit(allo);
-        try testing.expect(list.items.len == 0);
-        try testing.expect(list.ids.len == 0);
-        try testing.expect(list.indices.len == 0);
-        try testing.expect(list.capacity >= 200);
+    defer list.deinit(allo);
 
-        list.appendAssumeCapacity('a');
-        list.appendAssumeCapacity('b');
-        list.appendAssumeCapacity('c');
-        list.appendAssumeCapacity('d');
-        list.appendAssumeCapacity('e');
-        list.appendAssumeCapacity('f');
-        list.appendAssumeCapacity('g');
-    }
-    std.debug.print("{any}\n", .{list});
+    try testing.expect(list.items.len == 0);
+    try testing.expect(list.ids.len == 0);
+    try testing.expect(list.indices.len == 0);
+    try testing.expect(list.capacity >= 200);
 }
 
 test "Init Slice" {
@@ -625,11 +603,11 @@ test "Init Sentinel Slice" {
     const id_sentinel_slice: [:0]usize = @ptrCast(&id_buffer);
     const item_sentinel_slice: [:0]u8 = @ptrCast(&item_buffer);
 
-    const list: TriArrayList(u8) = try .initSentinelSlice(
+    const list: TriArrayList(u8) = .initSentinelSlice(
         0,
-        &index_sentinel_slice,
-        &id_sentinel_slice,
-        &item_sentinel_slice,
+        index_sentinel_slice,
+        id_sentinel_slice,
+        item_sentinel_slice,
     );
 
     try testing.expect(list.items.len == 0);
@@ -638,4 +616,17 @@ test "Init Sentinel Slice" {
     try testing.expect(list.capacity >= 1024);
 }
 
-test "Deinit" {}
+test "fromOwnedSlice" {
+    const allo = testing.allocator;
+    {
+        var list1: TriArrayList(u8) = try .initCapacity(allo, 16);
+        defer list1.deinit(allo);
+        try list1.appendSlice(allo, "foobar");
+
+        const slice = try list1.toOwnedSlice(allo);
+        var list2: TriArrayList(u8) = try .fromOwnedSlice(allo, slice);
+        defer list2.deinit(allo);
+
+        try testing.expectEqualStrings(list2.items, "foobar");
+    }
+}
