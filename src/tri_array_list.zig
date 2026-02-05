@@ -123,7 +123,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             allo: Allocator,
             comptime sentinel: T,
             slice: [:sentinel]T,
-        ) @This() {
+        ) Allocator.Error!@This() {
             const len = slice.len + 1;
             const indices = try allo.alignedAlloc(usize, null, len);
             fillIndices(indices, 0);
@@ -164,7 +164,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             allo: Allocator,
             comptime sentinel: T,
         ) Allocator.Error!SentinelSlice(sentinel) {
-            try self.ensureTotalCapacityPrecise(self.items.len + 1);
+            try self.ensureTotalCapacityPrecise(allo, self.items.len + 1);
             self.appendAssumeCapacity(sentinel);
             const result = try self.toOwnedSlice(allo);
             return result[0 .. result.len - 1 :sentinel];
@@ -635,7 +635,7 @@ test "toOwnedSentinelSlice fromOwnedSentinelSlice" {
     try list1.appendSlice(allo, "foobar");
 
     const sentinel_slice = try list1.toOwnedSliceSentinel(allo, 0);
-    var list2: TriArrayList(u8) = .fromOwnedSliceSentinel(allo, 0, sentinel_slice);
+    var list2: TriArrayList(u8) = try .fromOwnedSliceSentinel(allo, 0, sentinel_slice);
     defer list2.deinit(allo);
 
     try testing.expectEqualStrings(list2.items, "foobar");
