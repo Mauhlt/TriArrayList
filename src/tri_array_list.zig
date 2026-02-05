@@ -184,28 +184,37 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return cloned;
         }
 
-        /// Remove: uses swap remove for O(1) removal
+        /// Remove: uses swapAndPop to remove last item of data
         /// Asserts index is in bounds.
         /// O(1)
-        pub fn remove(self: *@This(), index: usize) T {
+        pub fn popByIndex(self: *@This(), index: usize) T {
             // check that index is within items len
-            assert(index < self.items.len);
+            if (@import("builtin").mode == .Debug) assert(index < self.items.len);
             const idx = self.indices[index];
-            const last_idx = self.indices[self.items.len - 1];
-
+            const last_idx = self.items.len - 1;
             if (idx == last_idx) {
+                const val = self.items[idx];
                 self.items.len -= 1;
-                return;
+                return val;
             }
+            const val = self.items[idx];
+            // idx values: 1. index, 2. 
+            std.mem.swap(T, &self.items[idx], &self.items[last_idx]); // swap the items
+            std.mem.swap(usize, &self.id[idx], &self.id[last_idx]); // swap what their ids pt to
+            std.mem.swap(usize, &self.indices[index], &self.indices[]); // swap their indices
+            self.items.len -= 1;
+            return val;
+        }
+
+        pub fn removeById(self: *@This(), id: usize) T {
+            const idx = self.ids[id];
         }
 
         /// Remove and return last item from items
         /// If items is empty, return `null`
-        /// Invalidate pointers to last item
         pub fn pop(self: *@This()) ?T {
             if (self.items.len == 0) return null;
             const val = self.items[self.items.len - 1];
-            self.items[self.items.len - 1] = undefined;
             self.items.len -= 1;
             return val;
         }
@@ -294,39 +303,10 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return self.allocatedItemSlice()[self.items.len..];
         }
 
-        /// Extends list by 1 element.
-        /// Never invalidates element pointers.
-        /// Assrts that list can hold an additional item.
-        pub fn appendAssumeCapacity(self: *@This(), item: T) void {
-            self.addOneAssumeCapacity().* = item;
-        }
-
-        /// Append slice of items to items.
-        /// If necessary, allocates items.
-        /// Invalidates element pointers if additional memory is needed.
-        pub fn appendSlice(self: *@This(), items: []const T) void {
-            try self.ensureUnusedCapacity(items.len);
-            self.appendSliceAssumeCapacity(items);
-        }
-
-        pub fn appendSliceAssumeCapacity(self: *@This(), items: []const T) void {
-            const old_len = self.items.len;
-            const new_len = old_len + items.len;
-            assert(new_len <= self.capacity);
-            @memcpy(self.items[old_len..][0..items.len], items);
-            self.items.len = new_len;
-            if (new_len < self.indices.len) {}
-            if (new_len < self.ids.len) {}
-            for (old_len..new_len) |i| self.indices[i] = i;
-            @memcpy(self.ids[old_len..new_len], self.indices[old_len..new_len]);
-        }
-
+        /// Asserts new length is less than current length
+        /// Resets len for each array to new length
         pub fn shrinkRetainingCapacity(self: *@This(), new_len: usize) void {
             assert(new_len < self.items.len);
-
-            @memset(self.items[new_len], undefined);
-            @memset(self.ids[new_len..], undefined);
-            @memset(self.items[new_len..], undefined);
 
             self.indices.len = new_len;
             self.items.len = new_len;
@@ -334,12 +314,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         /// Reduce length to 0.
-        /// Invalidate all element pointers
         pub fn clearRetainingCapacity(self: *@This()) void {
-            @memset(self.indices, undefined);
-            @memset(self.ids, undefined);
-            @memset(self.items, undefined);
-
             self.indices.len = 0;
             self.ids.len = 0;
             self.items.len = 0;
