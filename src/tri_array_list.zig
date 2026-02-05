@@ -99,7 +99,8 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
 
         /// TriArrayList takes ownership of slice.
         /// Create indices and ids using vectors and loops.
-        /// Deinit with `deinit` and `toOwnedSlice`.
+        /// Deinit with `deinit` or `toOwnedSlice` or `toOwnedSliceSentinel`.
+        /// O(n)
         pub fn fromOwnedSlice(allo: Allocator, slice: Slice) Allocator.Error!@This() {
             const len = slice.len;
             const indices = try allo.alignedAlloc(usize, null, len);
@@ -114,23 +115,20 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             };
         }
 
-        pub fn fromOwnedSentinelSlice(
+        /// TriArrayList takes ownership of slice sentinel.
+        /// Creates indices and ids using vectors and loops.
+        /// Deinit with `deinit` or `toOwnedSlice` or `toOwnedSliceSentinel`.
+        /// O(n)
+        pub fn fromOwnedSliceSentinel(
             allo: Allocator,
             comptime sentinel: T,
             slice: [:sentinel]T,
         ) @This() {
             const len = slice.len + 1;
-            var indices = try allo.alignedAlloc(usize, @alignOf(usize), len);
-            // uses vectors to quickly create values
-            const VEC_LEN: comptime_int = 64;
-            const stair = std.simd.iota(usize, VEC_LEN);
-            var i: usize = 0;
-            while (i + 64 < len) : (i += 64)
-                indices[i..][0..64].* = @as(@Vector(VEC_LEN, usize), @splat(i)) + stair;
-            for (i..len) |j| indices[i] = j;
-            // copy indices to ids
-            const ids = try allo.dupe(usize, indices);
-            // return
+            const indices = try allo.alignedAlloc(usize, null, len);
+            fillIndices(indices, 0);
+            const ids = try allo.alignedAlloc(usize, null, len);
+            @memcpy(ids, indices);
             return @This(){
                 .indices = indices,
                 .ids = ids,
@@ -163,8 +161,8 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// Deinit unnecessary but safe.
         pub fn toOwnedSliceSentinel(
             self: *@This(),
-            comptime sentinel: T,
             allo: Allocator,
+            comptime sentinel: T,
         ) Allocator.Error!SentinelSlice(sentinel) {
             try self.ensureTotalCapacityPrecise(self.items.len + 1);
             self.appendAssumeCapacity(sentinel);
@@ -616,17 +614,29 @@ test "Init Sentinel Slice" {
     try testing.expect(list.capacity >= 1024);
 }
 
-test "fromOwnedSlice" {
+test "toOwnedSlice fromOwnedSlice" {
     const allo = testing.allocator;
-    {
-        var list1: TriArrayList(u8) = try .initCapacity(allo, 16);
-        defer list1.deinit(allo);
-        try list1.appendSlice(allo, "foobar");
+    var list1: TriArrayList(u8) = try .initCapacity(allo, 16);
+    defer list1.deinit(allo);
+    try list1.appendSlice(allo, "foobar");
 
-        const slice = try list1.toOwnedSlice(allo);
-        var list2: TriArrayList(u8) = try .fromOwnedSlice(allo, slice);
-        defer list2.deinit(allo);
+    const slice = try list1.toOwnedSlice(allo);
+    var list2: TriArrayList(u8) = try .fromOwnedSlice(allo, slice);
+    defer list2.deinit(allo);
 
-        try testing.expectEqualStrings(list2.items, "foobar");
-    }
+    try testing.expectEqualStrings(list2.items, "foobar");
+}
+
+test "toOwnedSentinelSlice fromOwnedSentinelSlice" {
+    const allo = testing.allocator;
+
+    var list1: TriArrayList(u8) = try .initCapacity(allo, 16);
+    defer list1.deinit(allo);
+    try list1.appendSlice(allo, "foobar");
+
+    const sentinel_slice = try list1.toOwnedSliceSentinel(allo, 0);
+    var list2: TriArrayList(u8) = .fromOwnedSliceSentinel(allo, 0, sentinel_slice);
+    defer list2.deinit(allo);
+
+    try testing.expectEqualStrings(list2.items, "foobar");
 }
