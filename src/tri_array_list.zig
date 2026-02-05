@@ -260,6 +260,32 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return val;
         }
 
+        /// Gets items by indices
+        /// Swaps items and their ids
+        pub fn swapByIndex(self: *@This(), index: usize) void {}
+
+        pub fn swapById(self: *@This(), id: usize) void {}
+
+        pub fn findId(self: *const @This(), id: usize) usize {
+            for (self.ids, 0..) |curr_id, i| if (curr_id == id) return i;
+            unreachable;
+        }
+
+        pub fn findIdOrNull(self: *const @This(), id: usize) ?usize {
+            for (self.ids, 0..) |curr_id, i| if (curr_id == id) return i;
+            return null;
+        }
+
+        pub fn findIndex(self: *const @This(), index: usize) usize {
+            for (self.indices, 0..) |curr_index, i| if (curr_index == index) return i;
+            unreachable;
+        }
+
+        pub fn findIndexOrNull(self: *const @This(), index: usize) ?usize {
+            for (self.indices, 0..) |curr_index, i| if (curr_index == index) return i;
+            return null;
+        }
+
         /// Returns last item from items
         /// Asserts that items is not empty
         pub fn getLastItem(self: @This()) T {
