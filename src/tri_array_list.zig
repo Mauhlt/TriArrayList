@@ -4,6 +4,12 @@ const Alignment = std.mem.Alignment;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
+/// Goals:
+/// Fast Insertions = O(1)
+/// Fast Deletions = O(1)
+/// Fast Access = O(1)
+/// Stable Ids
+/// Tri Array List: Data, Indices, Ids
 pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
     if (alignment) |a|
         if (a.toByteUnits() == @alignOf(T))
@@ -178,63 +184,19 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return cloned;
         }
 
-        /// TODO:
-        /// Append `item` to items
-        /// Append `index` to indices
-        /// Swap `index` to its index
-        /// Append `id` to its id
-        /// Brings operation down to O(1)
-        pub fn insert(
-            self: *@This(),
-            allo: Allocator,
-            index: usize,
-            item: T,
-        ) Allocator.Error!void {
-            const dst = try self.addManyAt(allo, index, 1);
-            dst[0] = item;
-        }
-
-        /// TODO:
-        /// 1. appends data
-        /// 2. appends index
-        /// 3. swaps index to correct position
-        pub fn insertAssumeCapacity(self: *@This(), index: usize, item: T) void {
-            assert(self.items.len < self.capacity);
-            self.items.len += 1;
-            @memmove(self.items[index + 1 .. self.items.len], self.items[i .. self.items.len - 1]);
-            self.items[i] = item;
-        }
-
-        /// Append `item` to items
-        /// Append `index` to indices
-        /// Swap `index` to its position
-        /// O(1)
-        /// if list lacks unused capacity for additional items, return error.OutOfMemory
-        /// Asserts that index is in bounds or equal to length
-        pub fn insertBounded(self: *@This(), index: usize, item: T) error{OutOfMemory}!void {
-            if (self.capacity - self.items.len == 0) return error.OutOfMemory;
-            return insertAssumeCapacity(self, index, item);
-        }
-
-        /// Uses swap remove only - no ordered remove
-        /// Removes element at specified index and returns it.
-        /// Empty slot filled from end of list.
-        /// Invalidates ptrs to last element.
-        /// O(1).
+        /// Remove: uses swap remove for O(1) removal
         /// Asserts index is in bounds.
+        /// O(1)
         pub fn remove(self: *@This(), index: usize) T {
+            // check that index is within items len
+            assert(index < self.items.len);
             const idx = self.indices[index];
-            const val = self.items[idx];
-            const last_idx = self.items.len - 1;
+            const last_idx = self.indices[self.items.len - 1];
 
-            self.items[idx] = self.items[last_idx];
-            self.items[last_idx] = undefined;
-
-            self.ids[idx] = self.ids[last_idx];
-            self.indices[idx] = last_idx;
-
-            self.items.len -= 1;
-            return val;
+            if (idx == last_idx) {
+                self.items.len -= 1;
+                return;
+            }
         }
 
         /// Remove and return last item from items
@@ -332,11 +294,6 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             return self.allocatedItemSlice()[self.items.len..];
         }
 
-        pub fn append(self: *@This(), allo: Allocator, item: T) Allocator.Error!void {
-            const new_item_ptr = try self.addOne(allo);
-            new_item_ptr.* = item;
-        }
-
         /// Extends list by 1 element.
         /// Never invalidates element pointers.
         /// Assrts that list can hold an additional item.
@@ -357,6 +314,9 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             const new_len = old_len + items.len;
             assert(new_len <= self.capacity);
             @memcpy(self.items[old_len..][0..items.len], items);
+            self.items.len = new_len;
+            if (new_len < self.indices.len) {}
+            if (new_len < self.ids.len) {}
             for (old_len..new_len) |i| self.indices[i] = i;
             @memcpy(self.ids[old_len..new_len], self.indices[old_len..new_len]);
         }
@@ -466,113 +426,6 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
             self.indices.len = self.capacity;
             self.ids.len = self.capacity;
             self.items.len = self.capacity;
-        }
-
-        /// Increase length by 1. Returns ptr to new item.
-        /// Returned element ptr is invalidated when list is resized.
-        pub fn addOne(self: *@This(), allo: Allocator) Allocator.Error!*T {
-            // never overflows b/c `self.items` can never occupy outside range.
-            const new_len = self.items.len + 1;
-            try self.ensureTotalCapacity(allo, new_len);
-            return self.addOneAssumeCapacity();
-        }
-
-        /// Increase len by 1. Return ptr to new item.
-        /// Never invalidate element ptrs.
-        /// Returned element ptr is invalidated when list is resized.
-        /// Asserts that list can hold 1 more item.
-        pub fn addOneAssumeCapacity(self: *@This()) *T {
-            assert(self.items.len < self.capacity);
-            assert(self.ids.len < self.capacity);
-            assert(self.indices.len < self.capacity);
-
-            self.items.len += 1;
-            // other two can be greater than but never less than items length
-            if (self.ids.len < self.items.len)
-                self.ids.len = self.items.len;
-            if (self.indices.len < self.items.len)
-                self.indices.len = self.items.len;
-
-            return &self.items[self.items.len - 1];
-        }
-
-        /// Increase length by 1. Return pointer to new item
-        /// Never invalidate element pointers.
-        /// Return element pointer becomes invalid when list is resized.
-        /// If list lacks unused capacity, returns error.OutOfMemory.
-        pub fn addOneBounded(self: *@This()) error{OutOfMemory}!*T {
-            if (self.capacity - self.items.len < 1) return error.OutOfMemory;
-            return addOneAssumeCapacity(self);
-        }
-
-        /// Resize array. Add `n` elements with `undefined` values.
-        /// Return value is an array pointing to newly allocated elements.
-        /// Returned pointer invalidated when list is resized.
-        pub fn addManyAsArray(self: *@This(), allo: Allocator, comptime n: usize) Allocator.Error!*[n]T {
-            const prev_len = self.items.len;
-            try self.resize(allo, try addOrOom(self.items.len, n));
-            return self.items[prev_len..][0..n];
-        }
-
-        /// Resize array. Add `n` elements with `undefined` values.
-        /// Return value = array pointing to newly allocated elements.
-        /// Never invalidates element pointers.
-        /// Returned pointer becomes invalid when list is resized.
-        /// Asserts that list can hold additional items
-        pub fn addManyAsArrayAssumeCapacity(self: *@This(), comptime n: usize) *[n]T {
-            assert(self.items.len + n <= self.capacity);
-            const prev_len = self.items.len;
-            self.items.len += n;
-            return self.items[prev_len..][0..n];
-        }
-
-        /// Resize array. Add `n` elements with `undefined` values.
-        /// Return value is an array pointing to newly allocated elements.
-        /// Never invalidates pointers.
-        /// Returned element pointers become invalidated when list is resized.
-        /// If list lacks unused capacity, returns error.OutOfMemory.
-        pub fn addManyAsArrayBounded(
-            self: *@This(),
-            comptime n: usize,
-        ) error{OutOfMemory}!*[n]T {
-            if (self.capacity - self.items.len < n) return error.OutOfMemory;
-            return addManyAsArrayAssumeCapacity(self, n);
-        }
-
-        /// Resize array. Add `n` elements with `undefined` values.
-        /// Return value is a slice pointing to newly allocated elements.
-        /// Returned pointer becomes invalid when list is resized.
-        /// Resizes list if `self.capacity` is not large enough.
-        pub fn addManyAsSlice(
-            self: *@This(),
-            allo: Allocator,
-            n: usize,
-        ) Allocator.Error![]T {
-            const prev_len = self.items.len;
-            try self.resize(allo, try addOrOom(self.items.len, n));
-            return self.items[prev_len..][0..n];
-        }
-
-        /// Resize array. Add `n` elements with `undefined` values.
-        /// Return a slice pointing to newly allocated elements.
-        /// Never invalidates element pointers.
-        /// Returned pointer is invalidated when list is resized.
-        /// Asserts list can hold additional items.
-        pub fn addManyAsSliceAssumeCapacity(self: *@This(), n: usize) []T {
-            assert(self.items.len + n <= self.capacity);
-            const prev_len = self.items.len;
-            self.items.len += n;
-            return self.items[prev_len..][0..n];
-        }
-
-        /// Resize array. Add `n` new elements with `undefined` values.
-        /// Return slice pointing to newly allocated elements.
-        /// Never invalidates element pointers. Returned pointer is invalidated
-        /// when list is resized.
-        /// IF list lacks unused capacity, returns error.OutOfMemmory.
-        pub fn addManyAsSliceBounded(self: *@This(), n: usize) error{OutOfMemory}![]T {
-            if (self.capacity - self.items.len < n) return error.OutOfMemory;
-            return addManyAsSliceAssumeCapacity(self, n);
         }
 
         /// Called when growing memory.
