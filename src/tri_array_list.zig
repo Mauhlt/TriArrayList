@@ -252,35 +252,41 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         }
 
         /// Remove and return last item from items
-        /// If items is empty, return `null`
-        pub fn pop(self: *@This()) ?T {
-            if (self.items.len == 0) return null;
-            const val = self.items[self.items.len - 1];
+        pub fn pop(self: *@This()) T {
+            const val = self.getLastItem();
             self.items.len -= 1;
             return val;
         }
 
-        /// Gets items by indices
-        /// Swaps items and their ids
-        pub fn swapByIndex(self: *@This(), index1: usize, index2: usize) void {
-            assert(self.indices.len > index1);
-            assert(self.indices.len > index2);
-
-            const idx1 = self.indices[index1];
-            const idx2 = self.indices[index2];
-
-            std.mem.swap(T, &self.items[idx1], &self.items[idx2]);
+        /// Remove and return last item from items
+        /// If items is empty, return `null`
+        pub fn popOrNull(self: *@This()) ?T {
+            if (self.items.len == 0) return null;
+            return self.pop();
         }
 
-        /// Gets item by id.
-        pub fn swapById(self: *@This(), id1: usize, id2: usize) void {
-            assert(id1 < self.ids.len);
-            assert(id2 < self.ids.len);
+        /// O(1)
+        /// Asserts that items is not empty
+        pub fn remove(self: *@This(), index: usize) T {
+            assert(index < self.items.len);
+            const id = self.indices[index];
+            const last_id = self.items.len - 1;
+            if (id == last_id) return self.pop();
+            std.mem.swap(T, &self.items[id], &self.items[last_id]);
+            std.mem.swap(usize, &self.ids[id], &self.ids[last_id]);
+            std.mem.swap(usize, &self.indices[self.ids[id]], &self.indices[self.ids[last_id]]);
+            return self.pop();
+        }
 
-            const idx1 = self.ids[id1];
-            const idx2 = self.ids[id2];
-
-            std.mem.swap(T, &self.items[idx1], &self.items[idx2]);
+        pub fn removeOrNull(self: *@This(), index: usize) ?T {
+            assert(index < self.items.len);
+            const id = self.indices[index];
+            const last_id = self.items.len - 1;
+            if (id == last_id) return self.popOrNull();
+            std.mem.swap(T, &self.items[id], &self.items[last_id]);
+            std.mem.swap(usize, &self.ids[id], &self.ids[last_id]);
+            std.mem.swap(usize, &self.indices[self.ids[id]], &self.indices[self.ids[last_id]]);
+            return self.popOrNull();
         }
 
         pub fn findId(self: *const @This(), id: usize) usize {
