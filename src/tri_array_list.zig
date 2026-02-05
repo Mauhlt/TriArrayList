@@ -70,11 +70,13 @@ pub fn Aligned(comptime T: type, comptime alignment: ?Alignment) type {
         /// Init with externally managed memory
         /// Buffer deterimines capacity + length set to 0
         /// All fns that accept allocator will cause illegal behavior
+        /// Always assumes sentinels for index and id are 0.
+        /// Allows user to change sentinel for item.
         pub fn initSentinelSlice(
             comptime sentinel: T,
-            index_buffer: [:sentinel]T,
-            id_buffer: [:sentinel]T,
-            item_buffer: [:sentinel]T,
+            index_buffer: *const [:0]usize,
+            id_buffer: *const [:0]usize,
+            item_buffer: *const [:sentinel]T,
         ) @This() {
             const len = item_buffer.len + 1;
             assert(index_buffer.len == id_buffer.len);
@@ -568,7 +570,7 @@ fn fillIndices(list: []usize, start_index: usize) void {
     for (i..len) |j| list[j] = j;
 }
 
-test "Init" {
+test "Empty" {
     const list: TriArrayList(i32) = .empty;
     try testing.expect(list.items.len == 0);
     try testing.expect(list.ids.len == 0);
@@ -576,14 +578,25 @@ test "Init" {
     try testing.expect(list.capacity == 0);
 }
 
-test "initCapacity" {
+test "initCapacity deinit" {
     const allo = testing.allocator;
     var list: TriArrayList(i32) = try .initCapacity(allo, 200);
-    defer list.deinit(allo);
-    try testing.expect(list.items.len == 0);
-    try testing.expect(list.ids.len == 0);
-    try testing.expect(list.indices.len == 0);
-    try testing.expect(list.capacity >= 200);
+    {
+        defer list.deinit(allo);
+        try testing.expect(list.items.len == 0);
+        try testing.expect(list.ids.len == 0);
+        try testing.expect(list.indices.len == 0);
+        try testing.expect(list.capacity >= 200);
+
+        list.appendAssumeCapacity('a');
+        list.appendAssumeCapacity('b');
+        list.appendAssumeCapacity('c');
+        list.appendAssumeCapacity('d');
+        list.appendAssumeCapacity('e');
+        list.appendAssumeCapacity('f');
+        list.appendAssumeCapacity('g');
+    }
+    std.debug.print("{any}\n", .{list});
 }
 
 test "Init Slice" {
@@ -601,14 +614,6 @@ test "Init Slice" {
     try testing.expect(list.ids.len == 0);
     try testing.expect(list.indices.len == 0);
     try testing.expect(list.capacity >= 1024);
-
-    list.appendAssumeCapacity('a');
-    list.appendAssumeCapacity('b');
-    list.appendAssumeCapacity('c');
-    list.appendAssumeCapacity('d');
-    list.appendAssumeCapacity('e');
-    list.appendAssumeCapacity('f');
-    list.appendAssumeCapacity('g');
 }
 
 test "Init Sentinel Slice" {
@@ -616,11 +621,12 @@ test "Init Sentinel Slice" {
     var id_buffer: [1024]usize = undefined;
     var item_buffer: [1024]u8 = undefined;
 
-    const index_sentinel_slice: [:0]usize = &index_buffer;
-    const id_sentinel_slice: [:0]usize = &id_buffer;
-    const item_sentinel_slice: [:0]u8 = &item_buffer;
+    const index_sentinel_slice: [:0]usize = @ptrCast(&index_buffer);
+    const id_sentinel_slice: [:0]usize = @ptrCast(&id_buffer);
+    const item_sentinel_slice: [:0]u8 = @ptrCast(&item_buffer);
 
     const list: TriArrayList(u8) = try .initSentinelSlice(
+        0,
         &index_sentinel_slice,
         &id_sentinel_slice,
         &item_sentinel_slice,
@@ -632,39 +638,4 @@ test "Init Sentinel Slice" {
     try testing.expect(list.capacity >= 1024);
 }
 
-// test "clone" {
-//     const allo = testing.allocator;
-//     var array: TriArrayList(i32) = .empty;
-//     try array.append(allo, -1);
-//     try array.append(allo, 3);
-//     try array.append(allo, 5);
-//
-//     var cloned = try array.clone(allo);
-//     defer cloned.deinit(allo);
-//
-//     // try testing.expectEqualSlices();
-// }
-//
-// test "Swap Remove" {
-//     const allo = testing.allocator;
-//     var arr: TriArrayList(i32) = .empty;
-//     for (0..8) |i|
-//         try arr.append(allo, @intCast(i));
-//     std.debug.print("{any}\n", .{arr.items});
-//     std.debug.print("{any}\n", .{arr.ids});
-//     std.debug.print("{any}\n", .{arr.indices});
-//
-//     _ = arr.remove(2);
-//     std.debug.print("{any}\n", .{arr.items});
-//     std.debug.print("{any}\n", .{arr.ids});
-//     std.debug.print("{any}\n", .{arr.indices});
-// }
-//
-// test "Append" {
-//     const allo = testing.allocator;
-//     var arr: TriArrayList(u8) = .empty;
-//     for ([]const u8{"dgefabc"}) |ch| try arr.append(allo, ch);
-//     std.debug.print("{any}\n", .{arr.items});
-//     std.debug.print("{any}\n", .{arr.ids});
-//     std.debug.print("{any}\n", .{arr.indices});
-// }
+test "Deinit" {}
